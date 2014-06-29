@@ -3,38 +3,39 @@ from graphite.logger import log
 from graphite.node import BranchNode, LeafNode
 from random import random
 from time import localtime, time, strftime
+import re
 
 
 class TestFinder:
     # Metric tree
     tree = {
         'test-finder': {
-            'level1': {
-                'level1_1': {
-                    'level1_1_1': {},
+            'level_1': {
+                'level_a': {
+                    'level_A': {},
                 },
-                'level1_2': {
-                    'level1_2_1': {},
-                    'level1_2_2': {},
+                'level_b': {
+                    'level_A': {},
+                    'level_B': {},
                 },
-                'level1_3': {
-                    'level1_3_1': {},
-                    'level1_3_2': {},
-                    'level1_3_3': {},
+                'level_c': {
+                    'level_A': {},
+                    'level_B': {},
+                    'level_C': {},
                 },
             },
-            'level2': {
-                'level2_1': {
-                    'level2_1_1': {},
-                    'level2_2_2': {},
-                    'level2_2_3': {},
+            'level_2': {
+                'level_a': {
+                    'level_A': {},
+                    'level_B': {},
+                    'level_C': {},
                 },
-                'level2_2': {
-                    'level2_2_1': {},
-                    'level2_2_2': {},
+                'level_b': {
+                    'level_A': {},
+                    'level_B': {},
                 },
-                'level2_3': {
-                    'level2_3_1': {},
+                'level_c': {
+                    'level_A': {},
                 },
             },
         },
@@ -53,54 +54,99 @@ class TestFinder:
 
     def get_struct(self, query):
         # Parse the query
-        path = filter(None, query.split('.'))
+        items = filter(None, query.split('.'))
+
+        prev_paths = [items]
+        records = []
+
+        # Evaluate path
+        while True:
+            cur_paths = []
+            cur_records = []
+
+            for path in prev_paths:
+                paths, records = self.eval_path(path)
+                cur_paths += paths
+                cur_records += records
+
+            if prev_paths == cur_paths:
+                # Take the last record information
+                records = cur_records
+                break
+            else:
+                prev_paths = cur_paths
+
+        return records
+
+    def eval_path(self, path):
+        is_list = False
+        is_wild = False
+        is_valid = True
+
         # Create pointer to the first level
         pointer = self.tree
 
-        # This is where we store the result
-        ret = []
-
-        # Indicates if it's the first level
-        is_first = True
-        # Indicates if the path is valid
-        path_is_valid = False
-
+        # Check if there is some item to expand
+        n = 0
         for item in path:
-            if (
-                    (item == '*' and (is_first or path_is_valid)) or
-                    (
-                        path_is_valid and item in pointer and
-                        len(pointer[item].keys()) == 0)):
+            if '{' in item:
+                # Expand list
+                is_list = True
+                break
+            elif '*' in item:
+                # Expand wildcard
+                is_wild = True
+                break
+            elif item not in pointer:
+                is_valid = False
+                break
 
-                # Create records for all children on this level
-                for key in pointer.keys():
-                    # Check if it's a leaf
-                    has_children = int(bool(len(pointer[key].keys())))
+            pointer = pointer[item]
 
-                    # Create the record ID
-                    rec_id = query
-                    if query.endswith('*'):
-                        rec_id = query.rstrip('*') + key
+            n += 1
 
-                    # Build the child record
-                    record = {
-                        'text': key,
-                        'id': rec_id,
-                        'allowChildren': has_children,
-                        'expandable': has_children,
-                        'leaf': int(not has_children),
-                    }
+        # This is where we store the result
+        ret_path = []
+        ret_record = []
 
-                    # Append the child to the results
-                    ret.append(record)
-            elif item in pointer:
-                pointer = pointer[item]
-                path_is_valid = True
+        if is_list:
+            # Create items from the list
+            match = re.match('(.*){(.*)}(.*)', path[n])
+            if match:
+                groups = match.groups()
+                lst = groups[1].split(',')
 
-            # Invalidate the first flag
-            is_first = False
+                for item in lst:
+                    tmp = list(path)
+                    tmp[n] = groups[0] + item + groups[2]
+                    ret_path.append(tmp)
+        elif is_wild:
+            # Create items from the wildcard
+            item = path[n].replace('*', '.*')
+            pattern = re.compile(item)
 
-        return ret
+            for key in sorted(pointer.keys()):
+                if pattern.match(key):
+                    tmp = list(path)
+                    tmp[n] = key
+                    ret_path.append(tmp)
+        elif is_valid:
+            # Check if it's a leaf
+            has_children = int(bool(len(pointer.keys())))
+
+            # Build the child record
+            record = {
+                'text': path[-1],
+                'id': '.'.join(path),
+                'allowChildren': has_children,
+                'expandable': has_children,
+                'leaf': int(not has_children),
+            }
+
+            ret_path = [path]
+            ret_record = [record]
+
+        return ret_path, ret_record
 
 
 class RandomReader:
@@ -120,10 +166,14 @@ class RandomReader:
             end_time,
             strftime("%Y/%m/%d %T", localtime(end_time))))
 
+        # Data step
         data_step = 5
+
+        # Time period definition
         data_from = start_time
         data_to = end_time
 
+        # Generate data
         series = []
         for n in range(0, data_to - data_from):
             series.append(random())
@@ -135,8 +185,9 @@ class RandomReader:
 
     def get_intervals(self):
         log.info('===GET_INTERVALS===')
-        # We have data for all the times ;o)
+        # We have data from the beginning of the epoch :o)
         start = 1
+        # We can see one hour into the future :o)
         end = int(time()+3600)
 
         log.info("get_interval: start=%s; end=%s" % (start, end))
