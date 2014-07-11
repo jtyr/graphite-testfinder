@@ -7,7 +7,7 @@ import re
 
 
 class TestFinder:
-    # Metric tree
+    # Metrics tree
     tree = {
         'test-finder': {
             'level_1': {
@@ -42,43 +42,56 @@ class TestFinder:
     }
 
     def find_nodes(self, query):
-        # Get the part of tree described by the query
-        struct = self.get_struct(query.pattern)
+        log.info('find_nodes: %s' % (query.pattern))
+
+        # Parse the query
+        path_items = filter(None, query.pattern.split('.'))
+
+        records = []
+
+        # Take request addressed only for this finder
+        if path_items[0] == '*' or path_items[0] in self.tree:
+            # Get the part of tree described by the query
+            records = self.get_records(path_items)
 
         # Build node
-        for item in struct:
-            if item['leaf']:
-                yield LeafNode(item['id'], RandomReader(item['id']))
+        for record in records:
+            if record['leaf']:
+                yield LeafNode(record['id'], RandomReader(record['id']))
             else:
-                yield BranchNode(item['id'])
+                yield BranchNode(record['id'])
 
-    def get_struct(self, query):
-        # Parse the query
-        items = filter(None, query.split('.'))
+    def get_records(self, path_items):
+        log.info('get_record: START')
 
-        prev_paths = [items]
+        prev_paths = [path_items]
         records = []
 
         # Evaluate path
         while True:
             cur_paths = []
-            cur_records = []
+            loop_records = []
 
             for path in prev_paths:
-                paths, records = self.eval_path(path)
-                cur_paths += paths
-                cur_records += records
+                tmp_paths, tmp_records = self.eval_path(path)
+                cur_paths += tmp_paths
+                loop_records += tmp_records
 
-            if prev_paths == cur_paths:
-                # Take the last record information
-                records = cur_records
+            if loop_records or not cur_paths:
+                records = loop_records
+
+                # Break if the record is available or if the path is invalid
                 break
             else:
                 prev_paths = cur_paths
 
+        log.info('get_record: END')
+
         return records
 
     def eval_path(self, path):
+        log.info('eval_path: %s' % (path))
+
         is_list = False
         is_wild = False
         is_valid = True
